@@ -4,6 +4,8 @@
 #include <random>
 #include <vector>
 
+bool const LOG = false;
+
 int mod(int x, unsigned m) {
 	int r = x % static_cast<int>(m);
 	if (r < 0) {
@@ -96,22 +98,42 @@ struct Lattice {
 		index = mod(index, N);
 		return _next_site[N * N * N * t + N * N * index.x + N * index.y + index.z];
 	}
+
+	void print_lattice() const {
+		for (unsigned t = 0; t < k; ++t) {
+			for (unsigned y = 0; y < N; ++y) {
+				for (unsigned z = 0; z < N; ++z) {
+					for (unsigned x = 0; x < N; ++x) {
+						if (occupied(t, { x, y, z })) {
+							std::cout << "#";
+						} else {
+							std::cout << ".";
+						}
+					}
+					std::cout << " ";
+				}
+				std::cout << std::endl;
+			}
+			std::cout << "~~~~~~~~" << std::endl;
+		}
+	}
 };
 
 int main(int argc, char** argv) {
 	// Initialize lattice.
 	unsigned N = 2;    // Number of lattice sites along one axis.
-	unsigned K = 1090; // Number of time steps.
+	unsigned K = 2; // Number of time steps.
 	unsigned D = 3;    // Dimension of lattice.
 	double T = 1.;     // Hopping constant.
 	double mu = 1.4;    // Chemical potential.
 	double beta = 12.;  // Beta.
 	double epsilon = beta / K;
-	unsigned event_count = 1000;
+	unsigned events_burn = 0;
+	unsigned event_count = 3200;
 	Lattice lattice(N, K);
 	// Random number engine.
 	std::default_random_engine rng;
-	rng.seed(std::time(0));
+	rng.seed(0);
 	std::uniform_real_distribution<double> prob_dist(0., 1.);
 	std::uniform_int_distribution<int> N_dist(0, N - 1);
 	std::uniform_int_distribution<int> K_dist(0, K - 1);
@@ -126,23 +148,32 @@ int main(int argc, char** argv) {
 	Index3 winding = { 0, 0, 0 };
 	unsigned hop_space = 0;
 	for (unsigned idx = 0; idx < event_count; ++idx) {
+		if (LOG) {
+			std::cout << "NEW EVENT" << std::endl;
+			std::cout << "---------" << std::endl;
+		}
 		// Pick point.
 		Index3 start_xs = { N_dist(rng), N_dist(rng), N_dist(rng) };
 		int start_t = K_dist(rng);
 		Index3 xs = start_xs;
 		int t = start_t;
 		// Check if occupied to set our initial direction correctly.
-		forwards = !lattice.occupied(t, xs);
 		if (lattice.occupied(t, xs)) {
-				forwards = false;
-				next_xs = lattice.prev_site(t, xs);
+			forwards = false;
+			next_xs = lattice.prev_site(t, xs);
 		} else {
-				forwards = true;
+			forwards = true;
+			lattice.occupied(t, xs) = true;
 		}
 		while (true) {
+			if (LOG) {
+				std::cout << "hops: " << hop_space << std::endl;
+				std::cout << "pos: " << t << ", (" << xs[0] << ", " << xs[1] << ", " << xs[2] << ")" << std::endl;
+				lattice.print_lattice();
+			}
 			// Evolve.
 			if (forwards) {
-				if (prob_dist(rng) < std::exp(mu * epsilon)) {
+				if (prob_dist(rng) <= std::exp(mu * epsilon)) {
 					// Accept.
 					// Choose direction.
 					next_xs = xs;
@@ -169,12 +200,20 @@ int main(int argc, char** argv) {
 					lattice.next_site(t, xs) = next_xs;
 					xs = next_xs;
 					t += 1;
+					if (t >= K) {
+						t -= K;
+					}
 					if (old_occupied) {
+						// Check finished.
+						if (start_t == mod(t, K) && start_xs == mod(xs, N)) {
+							if (LOG) {
+								std::cout << "Terminate forward." << std::endl;
+							}
+							break;
+						}
 						// Flip direction and start moving backwards.
 						forwards = false;
 						next_xs = old_prev_site;
-					} else {
-						// Good.
 					}
 				} else {
 					// Reject.
@@ -183,18 +222,39 @@ int main(int argc, char** argv) {
 				}
 			} else {
 				// Moving backwards.
-				if (prob_dist(rng) < std::exp(-mu * epsilon)) {
+				if (prob_dist(rng) <= std::exp(-mu * epsilon)) {
 					// Accept.
 					if (xs != next_xs) {
 						hop_space -= 1;
 					}
-					lattice.occupied(t, xs) = false;
+					if (lattice.prev_site(t, xs) == next_xs) {
+						lattice.occupied(t, xs) = false;
+					}
 					xs = next_xs;
 					t -= 1;
+					if (t < 0) {
+						t += K;
+					}
 					next_xs = lattice.prev_site(t, xs);
+					// Check finished.
+					if (start_t == mod(t, K) && start_xs == mod(xs, N)) {
+						if (LOG) {
+							std::cout << "Terminate reverse." << std::endl;
+						}
+						lattice.occupied(t, xs) = false;
+						break;
+					}
 				} else {
 					// Reject.
 					forwards = true;
+					// Clear current position and step back.
+					lattice.occupied(t, xs) = false;
+					xs = next_xs;
+					t -= 1;
+					if (t < 0) {
+						t += K;
+					}
+					// Do a forced step forwards (no rejection).
 					next_xs = xs;
 					if (prob_dist(rng) > 1. - 2. * T * D * epsilon) {
 						// Hop to different site.
@@ -219,7 +279,17 @@ int main(int argc, char** argv) {
 					lattice.next_site(t, xs) = next_xs;
 					xs = next_xs;
 					t += 1;
+					if (t >= K) {
+						t -= K;
+					}
 					if (old_occupied) {
+						// Check finished.
+						if (start_t == mod(t, K) && start_xs == mod(xs, N)) {
+							if (LOG) {
+								std::cout << "Terminate reverse forward." << std::endl;
+							}
+							break;
+						}
 						// Flip direction and start moving backwards.
 						forwards = false;
 						next_xs = old_prev_site;
@@ -228,10 +298,10 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
-			// Check finished.
-			if (start_t == mod(t, K) && start_xs == mod(xs, N)) {
-				break;
-			}
+		}
+		if (LOG) {
+			std::cout << "final: " << std::endl;
+			lattice.print_lattice();
 		}
 		// Compute observables.
 		// Particle number.
@@ -247,9 +317,12 @@ int main(int argc, char** argv) {
 		}
 		double energy = -hop_space / beta + 2. * T * D * n;
 		// Statistics.
-		energies.push_back(energy);
-		numbers.push_back(n);
-		winding_numbers.push_back(winding.x + winding.y + winding.z);
+		// Burn the first few configurations.
+		if (idx > events_burn) {
+			energies.push_back(energy);
+			numbers.push_back(n);
+			winding_numbers.push_back(winding.x + winding.y + winding.z);
+		}
 	}
 	// END.
 	// Compute means.
@@ -258,9 +331,9 @@ int main(int argc, char** argv) {
 		mean_energy += energy;
 	}
 	mean_energy /= energies.size();
-	double mean_number = 0;
+	double mean_number = 0.;
 	for (unsigned number : numbers) {
-		mean_number += number;
+		mean_number += (double) number;
 	}
 	mean_number /= numbers.size();
 
