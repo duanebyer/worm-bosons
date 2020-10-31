@@ -2,6 +2,7 @@
 #include <ctime>
 #include <iostream>
 #include <random>
+#include <string>
 #include <vector>
 
 bool const LOG = false;
@@ -169,16 +170,22 @@ struct Lattice {
 };
 
 int main(int argc, char** argv) {
+	// Command line arguments.
+	if (argc != 8) {
+		std::cerr << "Usage: worms <# of events> <# to burn> <N> <ε> <μ> <β> <T>" << std::endl;
+		return 20;
+	}
+	unsigned event_count = std::stoi(argv[1]); // # of events.
+	unsigned burn_count = std::stoi(argv[2]); // # of events.
+	unsigned N = std::stoi(argv[3]);     // Number of lattice sites along one axis.
+	unsigned D = 3;                      // Dimension of lattice.
+	double epsilon = std::stod(argv[4]); // Time step.
+	double mu = std::stod(argv[5]);      // Chemical potential.
+	double beta = std::stod(argv[6]);    // Imaginary time.
+	double T = std::stod(argv[7]);       // Hopping constant.
+	// Number of time steps.
+	unsigned K = static_cast<unsigned>(std::ceil(beta / epsilon));
 	// Initialize lattice.
-	unsigned N = 2;    // Number of lattice sites along one axis.
-	unsigned K = 10000; // Number of time steps.
-	unsigned D = 3;    // Dimension of lattice.
-	double T = 1.;     // Hopping constant.
-	double mu = 1.4;    // Chemical potential.
-	double beta = 12.;  // Beta.
-	double epsilon = beta / K;
-	unsigned events_burn = 1000;
-	unsigned event_count = 10000;
 	Lattice lattice(N, K);
 	// Random number engine.
 	std::default_random_engine rng;
@@ -198,7 +205,10 @@ int main(int argc, char** argv) {
 	Index3 merge_prev_xs = { 0, 0, 0 };
 	Index3 winding = { 0, 0, 0 };
 	int hop_space = 0;
-	for (unsigned idx = 0; idx < event_count + events_burn; ++idx) {
+	for (unsigned idx = 0; idx < event_count + burn_count; ++idx) {
+		if (idx % (event_count / 100) == 0) {
+			std::cout << "Produced " << 100 * static_cast<double>(idx) / event_count << "%" << std::endl;
+		}
 		if (LOG) {
 			std::cout << "NEW EVENT" << std::endl;
 			std::cout << "---------" << std::endl;
@@ -504,24 +514,23 @@ int main(int argc, char** argv) {
 		double energy = -hop_space / beta + 2. * T * D * n;
 		// Statistics.
 		// Burn the first few configurations.
-		if (idx > events_burn) {
+		if (idx >= burn_count) {
 			energies.push_back(energy);
 			numbers.push_back(n);
 			winding_numbers.push_back(winding.x + winding.y + winding.z);
 		}
 	}
-	// END.
 	// Compute means.
 	double mean_energy = 0.;
 	for (double energy : energies) {
 		mean_energy += energy;
 	}
-	mean_energy /= energies.size();
+	mean_energy /= event_count;
 	double mean_number = 0.;
 	for (unsigned number : numbers) {
 		mean_number += (double) number;
 	}
-	mean_number /= numbers.size();
+	mean_number /= event_count;
 
 	std::cout << "Mean energy: " << mean_energy << std::endl;
 	std::cout << "Mean number: " << mean_number << std::endl;
