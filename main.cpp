@@ -171,14 +171,14 @@ struct Lattice {
 int main(int argc, char** argv) {
 	// Initialize lattice.
 	unsigned N = 2;    // Number of lattice sites along one axis.
-	unsigned K = 1000; // Number of time steps.
+	unsigned K = 10000; // Number of time steps.
 	unsigned D = 3;    // Dimension of lattice.
 	double T = 1.;     // Hopping constant.
 	double mu = 1.4;    // Chemical potential.
 	double beta = 12.;  // Beta.
 	double epsilon = beta / K;
-	unsigned events_burn = 3000;
-	unsigned event_count = 15200;
+	unsigned events_burn = 1000;
+	unsigned event_count = 10000;
 	Lattice lattice(N, K);
 	// Random number engine.
 	std::default_random_engine rng;
@@ -197,8 +197,8 @@ int main(int argc, char** argv) {
 	bool forwards = true;
 	Index3 merge_prev_xs = { 0, 0, 0 };
 	Index3 winding = { 0, 0, 0 };
-	unsigned hop_space = 0;
-	for (unsigned idx = 0; idx < event_count; ++idx) {
+	int hop_space = 0;
+	for (unsigned idx = 0; idx < event_count + events_burn; ++idx) {
 		if (LOG) {
 			std::cout << "NEW EVENT" << std::endl;
 			std::cout << "---------" << std::endl;
@@ -364,6 +364,9 @@ int main(int argc, char** argv) {
 						next_xs = lattice.prev_site(t, xs);
 					} else if (occupied == Occupied::MERGE) {
 						next_xs = merge_prev_xs;
+					}
+					if (xs != next_xs) {
+						hop_space -= 1;
 					}
 					if (prob_dist(rng) > 1. - 2. * T * D * epsilon) {
 						// Hop to different site.
