@@ -205,9 +205,11 @@ int main(int argc, char** argv) {
 	Index3 merge_prev_xs = { 0, 0, 0 };
 	Index3 winding = { 0, 0, 0 };
 	int hop_space = 0;
+	std::cout << "Burning" << std::endl;
 	for (unsigned idx = 0; idx < event_count + burn_count; ++idx) {
-		if (idx % (event_count / 100) == 0) {
-			std::cout << "Produced " << 100 * static_cast<double>(idx) / event_count << "%" << std::endl;
+		if (idx >= burn_count && (idx - burn_count) % (event_count / 100) == 0) {
+			std::cout << "Produced " << 100 * static_cast<double>(idx - burn_count) / event_count << "%\r";
+			std::cout.flush();
 		}
 		if (LOG) {
 			std::cout << "NEW EVENT" << std::endl;
@@ -532,6 +534,7 @@ int main(int argc, char** argv) {
 	}
 	mean_number /= event_count;
 
+	std::cout << std::endl;
 	std::cout << "Mean energy: " << mean_energy << std::endl;
 	std::cout << "Mean number: " << mean_number << std::endl;
 
