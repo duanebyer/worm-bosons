@@ -5,7 +5,10 @@
 #include <string>
 #include <vector>
 
-bool const LOG = false;
+bool const LOG_PROCESS = false;
+bool const LOG_STATE = false;
+bool const LOG_OBSERVABLES = false;
+bool const CHECK_VALIDITY = false;
 
 int mod(int x, unsigned m) {
 	int r = x % static_cast<int>(m);
@@ -47,13 +50,48 @@ struct Index3 {
 			return z;
 		}
 	}
+	Index3& operator+=(Index3 const& rhs) {
+		x += rhs.x;
+		y += rhs.y;
+		z += rhs.z;
+		return *this;
+	}
+	Index3& operator-=(Index3 const& rhs) {
+		x -= rhs.x;
+		y -= rhs.y;
+		z -= rhs.z;
+		return *this;
+	}
 };
+
+Index3 operator+(Index3 lhs, Index3 const& rhs) {
+	lhs += rhs;
+	return lhs;
+}
+
+Index3 operator-(Index3 lhs, Index3 const& rhs) {
+	lhs -= rhs;
+	return lhs;
+}
 
 Index3 mod(Index3 xs, unsigned m) {
 	xs.x = mod(xs.x, m);
 	xs.y = mod(xs.y, m);
 	xs.y = mod(xs.y, m);
 	return xs;
+}
+
+Index3 check_winding(Index3 xs, Index3 next_xs, unsigned N) {
+	Index3 winding = { 0, 0, 0 };
+	for (unsigned dim = 0; dim < 3; ++dim) {
+		if (xs[dim] == 0 && mod(next_xs[dim], N) == N - 1) {
+			winding[dim] += 1;
+		}
+		if (xs[dim] == N - 1 && mod(next_xs[dim], N) == 0) {
+			winding[dim] -= 1;
+		}
+	}
+	return winding;
 }
 
 enum class Occupied {
@@ -132,6 +170,9 @@ struct Lattice {
 							case Occupied::MERGE:
 								std::cout << 'M';
 								break;
+							default:
+								std::cout << 'X';
+								break;
 							}
 						}
 						switch (occupied(t, { x, y, z })) {
@@ -141,22 +182,29 @@ struct Lattice {
 						case Occupied::LINE:
 						case Occupied::TAIL:
 						case Occupied::MERGE:
-							if (mod(next.x, N) == x + 1) {
+							if (mod(next.x, N) == mod(x + 1, N)) {
 								std::cout << "→";
-							} else if(mod(next.x, N) == x - 1) {
+							} else if(mod(next.x, N) == mod(x - 1, N)) {
 								std::cout << "←";
-							} else if (mod(next.y, N) == y + 1) {
+							} else if (mod(next.y, N) == mod(y + 1, N)) {
 								std::cout << "↓";
-							} else if (mod(next.y, N) == y - 1) {
+							} else if (mod(next.y, N) == mod(y - 1, N)) {
 								std::cout << "↑";
-							} else if (mod(next.z, N) == z + 1) {
+							} else if (mod(next.z, N) == mod(z + 1, N)) {
 								std::cout << "⊙";
-							} else if (mod(next.z, N) == z - 1) {
+							} else if (mod(next.z, N) == mod(z - 1, N)) {
 								std::cout << "⊗";
+							} else if (mod(next, N) == Index3 { x, y, z }) {
+								std::cout << '*';
+							} else {
+								std::cout << 'X';
 							}
 							break;
 						case Occupied::HEAD:
 							std::cout << 'H';
+							break;
+						default:
+							std::cout << 'X';
 							break;
 						}
 					}
@@ -184,7 +232,10 @@ int main(int argc, char** argv) {
 	double beta = std::stod(argv[6]);    // Imaginary time.
 	double T = std::stod(argv[7]);       // Hopping constant.
 	// Number of time steps.
-	unsigned K = static_cast<unsigned>(std::ceil(beta / epsilon));
+	unsigned K = static_cast<unsigned>(std::ceil(std::abs(beta) / std::abs(epsilon)));
+	if (K <= 2) {
+		K = 3;
+	}
 	// Initialize lattice.
 	Lattice lattice(N, K);
 	// Random number engine.
@@ -199,7 +250,7 @@ int main(int argc, char** argv) {
 	// Statistics.
 	std::vector<double> energies;
 	std::vector<unsigned> numbers;
-	std::vector<unsigned> winding_numbers;
+	std::vector<Index3> windings;
 	// State variables.
 	bool forwards = true;
 	Index3 merge_prev_xs = { 0, 0, 0 };
@@ -211,7 +262,7 @@ int main(int argc, char** argv) {
 			std::cout << "Produced " << 100 * static_cast<double>(idx - burn_count) / event_count << "%\r";
 			std::cout.flush();
 		}
-		if (LOG) {
+		if (LOG_PROCESS || LOG_STATE || LOG_OBSERVABLES) {
 			std::cout << "NEW EVENT" << std::endl;
 			std::cout << "---------" << std::endl;
 		}
@@ -234,15 +285,10 @@ int main(int argc, char** argv) {
 		}
 		bool terminate = false;
 		while (!terminate) {
-			if (LOG) {
-				std::cout << "hops: " << hop_space << std::endl;
-				std::cout << "pos: " << t << ", (" << xs[0] << ", " << xs[1] << ", " << xs[2] << ")" << std::endl;
-				lattice.print_lattice();
-			}
 			// Evolve.
 			if (forwards) {
 				if (prob_dist(rng) <= std::exp(mu * epsilon)) {
-					if (LOG) {
+					if (LOG_PROCESS) {
 						std::cout << "forwards accept" << std::endl;
 					}
 					// Accept.
@@ -258,11 +304,9 @@ int main(int argc, char** argv) {
 							next_xs[dir] += sign;
 							if (next_xs[dir] < 0) {
 								next_xs[dir] += N;
-								winding[dir] += 1;
 							}
 							if (next_xs[dir] >= N) {
 								next_xs[dir] -= N;
-								winding[dir] -= 1;
 							}
 						}
 						// Create a path to next site.
@@ -278,7 +322,7 @@ int main(int argc, char** argv) {
 						} else if (next_occupied == Occupied::TAIL) {
 							// Terminate.
 							lattice.occupied(t + 1, next_xs) = Occupied::LINE;
-							if (LOG) {
+							if (LOG_PROCESS) {
 								std::cout << "terminate forward hit tail" << std::endl;
 							}
 							terminate = true;
@@ -291,6 +335,7 @@ int main(int argc, char** argv) {
 						} else {
 							lattice.occupied(t, xs) = Occupied::LINE;
 						}
+						winding += check_winding(xs, next_xs, N);
 						lattice.next_site(t, xs) = next_xs;
 						lattice.prev_site(t + 1, next_xs) = xs;
 						xs = next_xs;
@@ -303,7 +348,7 @@ int main(int argc, char** argv) {
 						return 2;
 					}
 				} else {
-					if (LOG) {
+					if (LOG_PROCESS) {
 						std::cout << "forwards reject" << std::endl;
 					}
 					forwards = false;
@@ -311,7 +356,7 @@ int main(int argc, char** argv) {
 					if (occupied == Occupied::HEAD) {
 					} else if (occupied == Occupied::EMPTY) {
 						// Terminate.
-						if (LOG) {
+						if (LOG_PROCESS) {
 							std::cout << "terminate forward immediate" << std::endl;
 						}
 						terminate = true;
@@ -323,7 +368,7 @@ int main(int argc, char** argv) {
 			} else {
 				// Moving backwards.
 				if (prob_dist(rng) <= std::exp(-mu * epsilon)) {
-					if (LOG) {
+					if (LOG_PROCESS) {
 						std::cout << "backwards accept" << std::endl;
 					}
 					// Accept.
@@ -347,7 +392,7 @@ int main(int argc, char** argv) {
 						lattice.occupied(t - 1, next_xs) = Occupied::HEAD;
 					} else if (next_occupied == Occupied::TAIL) {
 						lattice.occupied(t - 1, next_xs) = Occupied::EMPTY;
-						if (LOG) {
+						if (LOG_PROCESS) {
 							std::cout << "terminate backwards tail" << std::endl;
 						}
 						terminate = true;
@@ -358,13 +403,14 @@ int main(int argc, char** argv) {
 					if (xs != next_xs) {
 						hop_space -= 1;
 					}
+					winding -= check_winding(next_xs, xs, N);
 					xs = next_xs;
 					t -= 1;
 					if (t < 0) {
 						t += K;
 					}
 				} else {
-					if (LOG) {
+					if (LOG_PROCESS) {
 						std::cout << "backwards reject" << std::endl;
 					}
 					// Reject.
@@ -388,11 +434,9 @@ int main(int argc, char** argv) {
 						next_xs[dir] += sign;
 						if (next_xs[dir] < 0) {
 							next_xs[dir] += N;
-							winding[dir] += 1;
 						}
 						if (next_xs[dir] >= N) {
 							next_xs[dir] -= N;
-							winding[dir] -= 1;
 						}
 					}
 					Occupied next_occupied = lattice.occupied(t, next_xs);
@@ -402,7 +446,7 @@ int main(int argc, char** argv) {
 						if (next_xs == xs) {
 							if (occupied == Occupied::LINE) {
 								// Terminate.
-								if (LOG) {
+								if (LOG_PROCESS) {
 									std::cout << "terminate backwards immediate" << std::endl;
 								}
 								terminate = true;
@@ -413,6 +457,9 @@ int main(int argc, char** argv) {
 								merge_prev_xs = lattice.prev_site(t, next_xs);
 								lattice.next_site(t - 1, prev_xs) = next_xs;
 								lattice.prev_site(t, next_xs) = prev_xs;
+							} else {
+								std::cerr << "Error 10" << std::endl;
+								return 10;
 							}
 						} else {
 							Index3 prev_xs;
@@ -432,13 +479,16 @@ int main(int argc, char** argv) {
 									&& next_occupied == Occupied::TAIL) {
 								// Terminate.
 								lattice.occupied(t, next_xs) = Occupied::LINE;
-								if (LOG) {
+								if (LOG_PROCESS) {
 									std::cout << "terminate backwards reject" << std::endl;
 								}
 								terminate = true;
 							} else if (next_occupied == Occupied::MERGE) {
 								forwards = false;
 								merge_prev_xs = lattice.prev_site(t, next_xs);
+								// FIXME
+								std::cout << "Does this happen?" << std::endl;
+								return 1021001;
 							} else {
 								std::cerr << "Error 6" << std::endl;
 								return 6;
@@ -450,6 +500,8 @@ int main(int argc, char** argv) {
 							} else {
 								lattice.occupied(t, xs) = Occupied::EMPTY;
 							}
+							winding -= check_winding(prev_xs, xs, N);
+							winding += check_winding(prev_xs, next_xs, N);
 							lattice.next_site(t - 1, prev_xs) = next_xs;
 							lattice.prev_site(t, next_xs) = prev_xs;
 							xs = next_xs;
@@ -460,45 +512,71 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
-		}
-		if (LOG) {
-			std::cout << "final: " << std::endl;
-			lattice.print_lattice();
+			if (LOG_PROCESS) {
+				std::cout << "hops: " << hop_space << std::endl;
+				std::cout << "pos: " << t << ", (" << xs[0] << ", " << xs[1] << ", " << xs[2] << ")" << std::endl;
+				std::cout << "wind: " << winding.x << ", " << winding.y << ", " << winding.z << std::endl;
+			}
+			if (LOG_STATE) {
+				lattice.print_lattice();
+			}
 		}
 		// Compute observables.
 		// Check validity of lattice.
-		if (LOG) {
+		unsigned hop_space_validate = 0;
+		Index3 winding_validate = { 0, 0, 0 };
+		if (CHECK_VALIDITY) {
 			for (int t = 0; t < K; ++t) {
 				for (int z = 0; z < N; ++z) {
 					for (int y = 0; y < N; ++y) {
 						for (int x = 0; x < N; ++x) {
-							Occupied occupied = lattice.occupied(t, { x, y, z });
+							Index3 xs = { x, y, z };
+							Occupied occupied = lattice.occupied(t, xs);
 							if (occupied != Occupied::LINE && occupied != Occupied::EMPTY) {
 								std::cerr
 									<< "Error 8: Invalid occupied # "
 									<< static_cast<int>(occupied) << " at "
-									<< "(" << x << ", " << y << ", " << z << ", " << t << ")" << std::endl;
-								return 8;
+									<< "(" << t << ", " << x << ", " << y << ", " << z << ")" << std::endl;
 							}
 							if (occupied == Occupied::LINE) {
-								Index3 next = lattice.next_site(t, Index3 { x, y, z });
+								Index3 next = lattice.next_site(t, xs);
 								Occupied next_occupied = lattice.occupied(t + 1, next);
 								if (next_occupied == Occupied::EMPTY) {
 									std::cerr
 										<< "Error 8: Connected from line to empty at "
-										<< "(" << x << ", " << y << ", " << z << ", " << t << ")" << std::endl;
+										<< "(" << t << ", " << x << ", " << y << ", " << z << ")" << std::endl;
 									return 8;
 								}
-								if (mod(lattice.prev_site(t + 1, next), N) != Index3 { x, y, z }) {
+								if (mod(lattice.prev_site(t + 1, next), N) != xs) {
 									std::cerr
 										<< "Error 8: One way connection from "
-										<< "(" << x << ", " << y << ", " << z << ", " << t << ")" << std::endl;
+										<< "(" << t << ", " << x << ", " << y << ", " << z << ")" << std::endl;
 									return 8;
+								}
+							}
+							if (occupied == Occupied::LINE) {
+								Index3 next_xs = lattice.next_site(t, xs);
+								winding_validate += check_winding(xs, next_xs, N);
+								if (mod(next_xs, N) != xs) {
+									hop_space_validate += 1;
 								}
 							}
 						}
 					}
 				}
+			}
+			if (hop_space != hop_space_validate) {
+				std::cerr << "Error 8: Hop space is "
+					<< hop_space << "; should be "
+					<< hop_space_validate << std::endl;
+				return 8;
+			}
+			if (winding_validate != winding) {
+				std::cerr << "Error 8: Winding is "
+					<< winding.x << ", " << winding.y << ", " << winding.z
+					<< "; should be "
+					<< winding_validate.x << ", " << winding_validate.y << ", " << winding_validate.z << std::endl;
+				return 8;
 			}
 		}
 		// Particle number.
@@ -519,7 +597,12 @@ int main(int argc, char** argv) {
 		if (idx >= burn_count) {
 			energies.push_back(energy);
 			numbers.push_back(n);
-			winding_numbers.push_back(winding.x + winding.y + winding.z);
+			windings.push_back(winding);
+			if (LOG_OBSERVABLES) {
+				std::cout << "e = " << energy << std::endl;
+				std::cout << "n = " << n << std::endl;
+				std::cout << "ω = " << winding.x << ", " << winding.y << ", " << winding.z << std::endl;
+			}
 		}
 	}
 	// Compute means.
@@ -534,9 +617,19 @@ int main(int argc, char** argv) {
 	}
 	mean_number /= event_count;
 
+	double susceptibility = 0.;
+	for (Index3 winding : windings) {
+		susceptibility += 1. / (N * beta) * (
+			winding.x * winding.x
+			+ winding.y * winding.y
+			+ winding.z * winding.z);
+	}
+	susceptibility /= event_count;
+
 	std::cout << std::endl;
 	std::cout << "Mean energy: " << mean_energy << std::endl;
 	std::cout << "Mean number: " << mean_number << std::endl;
+	std::cout << "Susceptibility: " << susceptibility << std::endl;
 
 	return 0;
 }
