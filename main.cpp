@@ -2,6 +2,7 @@
 #include <ctime>
 #include <iostream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,72 @@ Index3 check_winding(Index3 xs, Index3 next_xs, unsigned N) {
 		}
 	}
 	return winding;
+}
+
+// Some helpful functions for computing statistics.
+double average(double const* data, std::size_t n) {
+	double mean = 0.;
+	for (std::size_t idx = 0; idx < n; ++idx) {
+		mean += data[idx];
+	}
+	mean /= n;
+	return mean;
+}
+
+double variance(double const* data, std::size_t n) {
+	double mean = average(data, n);
+	double var = 0.;
+	for (std::size_t idx = 0; idx < n; ++idx) {
+		var += (data[idx] - mean) * (data[idx] - mean);
+	}
+	var /= n - 1;
+	return var;
+}
+
+std::vector<double> chunks(double const* data, std::size_t n, std::size_t k) {
+	std::size_t pos = 0;
+	std::vector<double> chunk;
+	while (pos + k <= n) {
+		chunk.push_back(average(data + pos, k));
+		pos += k;
+	}
+	return chunk;
+}
+
+double correlation(double const* data, std::size_t n, std::size_t k) {
+	double corr = 0.;
+	double mean = average(data, n);
+	for (std::size_t idx = 0; idx < n; ++idx) {
+		corr += (data[idx] - mean) * (data[(idx + k) % n] - mean);
+	}
+	corr /= n;
+	return corr;
+}
+
+struct EstErr {
+	std::size_t chunk_n;
+	double est;
+	double err;
+};
+
+EstErr estimate(std::vector<double> data, double prec = 0.05) {
+	double var = variance(data.data(), data.size());
+	std::size_t chunk_n = 1;
+	// Chunk until correlation has vanished.
+	std::cout << correlation(data.data(), data.size(), 1) << ", " << var << std::endl;
+	while (correlation(data.data(), data.size(), 1) >= prec * var) {
+		data = chunks(data.data(), data.size(), 2);
+		chunk_n *= 2;
+		if (data.empty()) {
+			throw std::runtime_error("Not enough data to estimate observables");
+		}
+	}
+	// Return mean and variance of chunks.
+	return EstErr {
+		chunk_n,
+		average(data.data(), data.size()),
+		std::sqrt(variance(data.data(), data.size()) / data.size()),
+	};
 }
 
 enum class Occupied {
@@ -249,8 +316,9 @@ int main(int argc, char** argv) {
 	std::uniform_int_distribution<unsigned> dir_dist(0, D - 1);
 	// Statistics.
 	std::vector<double> energies;
-	std::vector<unsigned> numbers;
+	std::vector<double> numbers;
 	std::vector<Index3> windings;
+	std::vector<double> susceptibilities;
 	// State variables.
 	bool forwards = true;
 	Index3 merge_prev_xs = { 0, 0, 0 };
@@ -486,9 +554,6 @@ int main(int argc, char** argv) {
 							} else if (next_occupied == Occupied::MERGE) {
 								forwards = false;
 								merge_prev_xs = lattice.prev_site(t, next_xs);
-								// FIXME
-								std::cout << "Does this happen?" << std::endl;
-								return 1021001;
 							} else {
 								std::cerr << "Error 6" << std::endl;
 								return 6;
@@ -592,44 +657,35 @@ int main(int argc, char** argv) {
 			}
 		}
 		double energy = -hop_space / beta + 2. * T * D * n;
+		double susceptibility = 1. / (D * N * beta) * (
+			winding.x * winding.x
+			+ winding.y * winding.y
+			+ winding.z * winding.z);
 		// Statistics.
 		// Burn the first few configurations.
 		if (idx >= burn_count) {
 			energies.push_back(energy);
 			numbers.push_back(n);
 			windings.push_back(winding);
+			susceptibilities.push_back(susceptibility);
 			if (LOG_OBSERVABLES) {
 				std::cout << "e = " << energy << std::endl;
 				std::cout << "n = " << n << std::endl;
 				std::cout << "ω = " << winding.x << ", " << winding.y << ", " << winding.z << std::endl;
+				std::cout << "χ = " << susceptibility << std::endl;
 			}
 		}
 	}
 	// Compute means.
-	double mean_energy = 0.;
-	for (double energy : energies) {
-		mean_energy += energy;
-	}
-	mean_energy /= event_count;
-	double mean_number = 0.;
-	for (unsigned number : numbers) {
-		mean_number += (double) number;
-	}
-	mean_number /= event_count;
-
-	double susceptibility = 0.;
-	for (Index3 winding : windings) {
-		susceptibility += 1. / (N * beta) * (
-			winding.x * winding.x
-			+ winding.y * winding.y
-			+ winding.z * winding.z);
-	}
-	susceptibility /= event_count;
+	EstErr est_energy = estimate(energies);
+	EstErr est_number = estimate(numbers);
+	EstErr est_susceptibility = estimate(susceptibilities);
 
 	std::cout << std::endl;
-	std::cout << "Mean energy: " << mean_energy << std::endl;
-	std::cout << "Mean number: " << mean_number << std::endl;
-	std::cout << "Susceptibility: " << susceptibility << std::endl;
+	std::cout << "Chunk sizes: " << est_energy.chunk_n << ", " << est_number.chunk_n << ", " << est_susceptibility.chunk_n << std::endl;
+	std::cout << "Energy: " << est_energy.est << " ± " << est_energy.err << std::endl;
+	std::cout << "Number: " << est_number.est << " ± " << est_number.err << std::endl;
+	std::cout << "Susceptibility: " << est_susceptibility.est << " ± " << est_susceptibility.err << std::endl;
 
 	return 0;
 }
