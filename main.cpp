@@ -299,10 +299,11 @@ int main(int argc, char** argv) {
 	double beta = std::stod(argv[6]);    // Imaginary time.
 	double T = std::stod(argv[7]);       // Hopping constant.
 	// Number of time steps.
-	unsigned K = static_cast<unsigned>(std::ceil(std::abs(beta) / std::abs(epsilon)));
+	unsigned K = static_cast<unsigned>(std::round(std::abs(beta) / std::abs(epsilon)));
 	if (K <= 2) {
 		K = 3;
 	}
+	epsilon = beta / K;
 	// Initialize lattice.
 	Lattice lattice(N, K);
 	// Random number engine.
